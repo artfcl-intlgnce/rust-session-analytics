@@ -20,7 +20,7 @@ def dbconfig(filename='database.ini', section='postgresql'):
 
 
 
-def bmconfig(filename='database.ini', section="battlemetrics"):
+def bmconfig(filename='database.ini', section='battlemetrics'):
     parser = ConfigParser()
     parser.read(filename)
     result = ""

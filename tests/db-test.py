@@ -2,8 +2,6 @@ import psycopg2
 from config import dbconfig
 
 
-
-
 def connect():
     """ Connect to the PostgreSQL database server """
     conn = None
@@ -13,7 +11,7 @@ def connect():
 
         # connect to the PostgreSQL server
         print('Connecting to the PostgreSQL database...')
-        conn = psycopg2.connect(**params)
+        conn = psycopg2.connect(params)
 		
         # create a cursor
         cur = conn.cursor()

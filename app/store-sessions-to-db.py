@@ -1,3 +1,5 @@
+#!/usr/bin/python
+
    ##################################################################### 
  ##               Battlemetrics Player Session Analytics                ##
 #                      Code Author: Artfcl_Intlgnce                       #  
@@ -9,22 +11,14 @@
 ############################################################################
 
 import requests
-import json
 import time
 import datetime
 import schedule
 import logging
-import zmq
-import sys
-import threading
-import sched
-import queue_module as q
 from dotenv import load_dotenv
-
-import queue_module
-
-queue_module.test()
-
+from redis import Redis
+from rq import Queue
+import config
 
 ############################################################################
 #                           Configure Logger                               #
@@ -33,10 +27,9 @@ queue_module.test()
 logging.basicConfig(
     format='%(asctime)s %(levelname)-8s %(message)s',
     # Change level to INFO or ERROR to change terminal output (reduces storage stress)
-    level=logging.DEBUG,
+    level=logging.INFO,
     datefmt='%Y-%m-%d %H:%M:%S')
 logging.info("Logger Initialized")
-
 
 ############################################################################
 #                Initialize Global Variables / Caches                      #
@@ -45,19 +38,29 @@ logging.info("Logger Initialized")
 logging.info("Initializing Variables and Caches")
 
 # player_cache is the main baseline (or the "old" baseline)
-# global player_cache
+global player_cache
 player_cache = []
+
+class State(object):
+    def __init__(self):
+        self.player_cache = player_cache
+
+s = State()
 
 # player_cache_temp is the new/latest player cache pulled from BM. 
 # This eventually becomes the player_cache after player_deltas have been determined and queued. 
 player_cache_temp = []
 
+BM_API_KEY = config.bmconfig()['apikey']
+
+
 # Battlemetrics API Token goes here. This sets the headers for the http request
-headers = {'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbiI6IjgyOTljNGYzYjBlZjM3ZmYiLCJpYXQiOjE2MjA0NTEwNjYsIm5iZiI6MTYyMDQ1MTA2NiwiaXNzIjoiaHR0cHM6Ly93d3cuYmF0dGxlbWV0cmljcy5jb20iLCJzdWIiOiJ1cm46dXNlcjo0MDQ3MTMifQ.lCNPar3Y6MrvaxEzmfJgw4UVc3bFhM5JdKWniezkIcs', 'Content-Type': 'application/json'}
+headers = {'Authorization': 'Bearer ' + str(BM_API_KEY), 'Content-Type': 'application/json'}
 
 ############################################################################
 #                           Define Core Functions                          #
 ############################################################################
+
 
 #####################################################################################
 # getPlayerlist() Function                                                          #
@@ -69,7 +72,7 @@ headers = {'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2t
 
 def getPlayerlist(serverid):
 
-    logging.debug("Hit getPlayerlist()") # Log Everything!
+    logging.debug("Hit getPlayerlist()") 
     temp = [] # used to store return results of function
 
     # Call Battlemetrics API and format/parse. Returns array of BM Player ID's (NOT Steam ID's)
@@ -80,25 +83,26 @@ def getPlayerlist(serverid):
 
     # Loop through BM Response, Extract ID of player and append to result
     for row in data:
-        temp.append(row['id'])
-    # logging.debug("Page1 Players: " + str(temp))
+        temp.append(row)
+
     # Wrap Up and Return Result of getPlayerList()
     #print("Retrieved Player List" + str(temp))
-    logging.info("Retrieved Player List \n" + str(temp))
+    logging.debug("Retrieved Player List \n" + str(temp))
     return temp
 
-def getPlayerLeaves(player_cache, player_cache_temp):
+def getPlayerJoins(player_cache, player_cache_temp):
     logging.info("Size of Player Cache: " + str(len(player_cache)))
     logging.info("Size of Player Cache Temp: " + str(len(player_cache_temp)))
 
-    #logging.debug("GetPlayerLeaves() \n player_cache: " + str(player_cache) + "\n\n Player cache Temp " + str(player_cache_temp) )
+    #logging.debug("getPlayerJoins() \n player_cache: " + str(player_cache) + "\n\n Player cache Temp " + str(player_cache_temp) )
     temp = []
-    for player in player_cache:
-        if player not in player_cache_temp:
+    for player in player_cache_temp:
+        if player not in player_cache:
             temp.append(player)
-            print(str(player) + " NOT IN SERVER!")
-            logging.info(str(player) + " NOT IN SERVER!")
-    logging.debug("Results of getPlayerLeaves():" +  str(temp))
+            #print(str(player) + " JOINED SERVER - TAKE ACTION!")
+            logging.info(str(player['attributes']['name']) + " JOINED SERVER - TAKE ACTION")
+    s.player_cache = player_cache_temp
+    logging.debug("Results of getPlayerJoins():" +  str(temp))
     return temp
 
 #####################################################################################
@@ -114,22 +118,19 @@ def flow():
     logging.info("Hit flow()")
     # Get refreshed player list
     player_cache_temp = getPlayerlist(2387727)
-    global player_cache
-    if len(player_cache) > 0:
-        changes = getPlayerLeaves(player_cache,player_cache_temp)
-        for change in changes:
-            logging.info("Taking action for player " + str(change))
-            playerinfo_temp = getPlayerSession(str(change))
-            logging.debug("SESSION FOUND: " + str(playerinfo_temp))
-    else:
-        changes = []
+
+    for change in changes:
+        pass
+        #logging.info("Taking action for player " + str(change))
+        #playerinfo_temp = getPlayerSession(str(change))
+        #logging.debug("SESSION FOUND: " + str(playerinfo_temp))
+    changes=[]
+
 
     # Sets / overrides latest player list into player cache    
     player_cache = player_cache_temp
     player_cache_temp = []   #clear temp cache
-
-    logging.info("PLAYER LEAVES: " + str(changes))
-
+    logging.debug("PLAYER JOINS: " + str(changes))
     return changes
 
 #####################################################################################
@@ -162,15 +163,53 @@ def getPlayerSession(id):
         # THIS IS WHERE TO PUT THE SCHEDULED TIMER EVENT
         logging.warn("No player session found")
         pass
-    print(str(result))
+    #print(str(result))
     return result
+
+#####################################################################################
+# getPlayerID() Function                                                            #
+# This function gets steam ID and IP's based on player BM ID                        #
+# Inputs: Battlemetrics Player ID                                                   #
+# Returns: Array of Identifier Objects {'steamid':"string",'ip':"string"}           #
+#####################################################################################
+
+def getPlayerIP(bmid):
+    response = requests.get("https://api.battlemetrics.com/players/" + str(986440844) + "?include=identifier", headers=headers)
+    print(response.json()['included']) 
+
+    resp_arr = []
+    resp_obj = {}
+    for id in response.json()['included']:
+        if id['attributes']['type'] == "ip":
+            resp_obj['steamid'] = id['attributes']['identifier']
+            resp_arr.append(resp_obj)
+            print(id['attributes']['identifier'])
+        elif id['attributes']['type'] == "steamID":
+            resp_obj['steamid'] = id['attributes']['identifier']
+            resp_arr.append(resp_obj)
+            print(id['attributes']['identifier'])
+        else:
+            pass
+    print(str(resp_arr))
+    return str(resp_arr)
+
+
+#####################################################################################
+# writeIP2DB() Function                                                             #
+# This function adds an IP to the DB with player's Steam ID                         #
+# Inputs: SteamID, IP Address (Strings)                                             #
+# Returns: True or False (success or not)                                           #
+#####################################################################################
+
+def writeIP2DB(steamid,ip):
+    pass
 
 
 ############################################################################
 #                                 Queue Sys                                #
 ############################################################################
 
-
+'''
 context = zmq.Context()
 
 #  Socket to talk to server
@@ -188,6 +227,7 @@ for request in range(10):
     print("Received reply %s [ %s ]" % (request, message))
 
 
+'''
 
 
 ############################################################################
@@ -200,18 +240,17 @@ def main():
     logging.info("main*()")
 
     # player_cache is the main baseline (or the "old" baseline)
-    # global player_cache
-    # player_cache = []
+    global player_cache
+    player_cache = []
 
     # Scheduler for checking Server Playerlist Updates
-    schedule.every(20).seconds.do(flow)
-
+    schedule.every(30).seconds.do(flow)
 
     # Keeps app alive
     while 1:
         schedule.run_pending()
         time.sleep(1)
-        #logging.debug("Scheduler Run")
     
 if __name__ == "__main__":
     main()
+
