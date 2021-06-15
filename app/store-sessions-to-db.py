@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
 
    ##################################################################### 
  ##               Battlemetrics Player Session Analytics                ##
@@ -18,7 +18,8 @@ import logging
 from dotenv import load_dotenv
 from redis import Redis
 from rq import Queue
-import config
+import configparser
+import os
 
 ############################################################################
 #                           Configure Logger                               #
@@ -51,9 +52,17 @@ s = State()
 # This eventually becomes the player_cache after player_deltas have been determined and queued. 
 player_cache_temp = []
 
-BM_API_KEY = config.bmconfig()['apikey']
 
+# BM_API_KEY = config.bmconfig()['apikey']
+path = os.chdir(os.path.dirname(os.path.abspath(__file__)))
+print(path)
+f = open("keys.ini", "r")
+config = configparser.ConfigParser()
+config.read('keys.ini')
+BM_API_KEY = config['battlemetrics']['apikey']
+#print(BM_API_KEY)
 
+f.close
 # Battlemetrics API Token goes here. This sets the headers for the http request
 headers = {'Authorization': 'Bearer ' + str(BM_API_KEY), 'Content-Type': 'application/json'}
 
@@ -78,7 +87,9 @@ def getPlayerlist(serverid):
     # Call Battlemetrics API and format/parse. Returns array of BM Player ID's (NOT Steam ID's)
     #response = requests.get("https://api.battlemetrics.com/players?page[size]=100&fields[identifier]=type,identifier&filter[servers]='" + str(serverid) + "'", headers=headers)
     response = requests.get("https://api.battlemetrics.com/servers/" + str(serverid) + "?include=player", headers=headers)
+    print(headers)
     responsejson = response.json()
+    #print(responsejson)
     data = responsejson['included']
 
     # Loop through BM Response, Extract ID of player and append to result
@@ -114,23 +125,28 @@ def getPlayerJoins(player_cache, player_cache_temp):
 #####################################################################################
 
 # Main sequence being scheduled
-def flow():
+def flow(pcache):
     logging.info("Hit flow()")
     # Get refreshed player list
     player_cache_temp = getPlayerlist(2387727)
+    player_cache = pcache
+    changes = []
+    for player in player_cache_temp:
+        if player not in player_cache:
+            logging.info("Taking action for player " + str(player))
+            changes.append(player)
 
-    for change in changes:
-        pass
-        #logging.info("Taking action for player " + str(change))
-        #playerinfo_temp = getPlayerSession(str(change))
+
+        #pass
+
+        #playerinfo_temp = getPlayerSession(str(change)) ### KEY LINE OF CODE FOR SESSION ANALYTICS
         #logging.debug("SESSION FOUND: " + str(playerinfo_temp))
-    changes=[]
-
+    #changes=[]
 
     # Sets / overrides latest player list into player cache    
     player_cache = player_cache_temp
     player_cache_temp = []   #clear temp cache
-    logging.debug("PLAYER JOINS: " + str(changes))
+    #logging.debug("PLAYER JOINS: " + str(changes))
     return changes
 
 #####################################################################################
@@ -244,7 +260,7 @@ def main():
     player_cache = []
 
     # Scheduler for checking Server Playerlist Updates
-    schedule.every(30).seconds.do(flow)
+    schedule.every(10).seconds.do(flow(player_cache))
 
     # Keeps app alive
     while 1:
