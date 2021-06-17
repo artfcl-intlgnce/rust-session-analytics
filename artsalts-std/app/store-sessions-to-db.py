@@ -87,7 +87,7 @@ def getPlayerlist(serverid):
     # Call Battlemetrics API and format/parse. Returns array of BM Player ID's (NOT Steam ID's)
     #response = requests.get("https://api.battlemetrics.com/players?page[size]=100&fields[identifier]=type,identifier&filter[servers]='" + str(serverid) + "'", headers=headers)
     response = requests.get("https://api.battlemetrics.com/servers/" + str(serverid) + "?include=player", headers=headers)
-    print(headers)
+    #print(headers)
     responsejson = response.json()
     #print(responsejson)
     data = responsejson['included']
@@ -102,8 +102,8 @@ def getPlayerlist(serverid):
     return temp
 
 def getPlayerJoins(player_cache, player_cache_temp):
-    logging.info("Size of Player Cache: " + str(len(player_cache)))
-    logging.info("Size of Player Cache Temp: " + str(len(player_cache_temp)))
+    print("Size of Player Cache: " + str(len(player_cache)))
+    print("Size of Player Cache Temp: " + str(len(player_cache_temp)))
 
     #logging.debug("getPlayerJoins() \n player_cache: " + str(player_cache) + "\n\n Player cache Temp " + str(player_cache_temp) )
     temp = []
@@ -112,7 +112,7 @@ def getPlayerJoins(player_cache, player_cache_temp):
             temp.append(player)
             #print(str(player) + " JOINED SERVER - TAKE ACTION!")
             logging.info(str(player['attributes']['name']) + " JOINED SERVER - TAKE ACTION")
-    s.player_cache = player_cache_temp
+    player_cache = player_cache_temp
     logging.debug("Results of getPlayerJoins():" +  str(temp))
     return temp
 
@@ -125,15 +125,17 @@ def getPlayerJoins(player_cache, player_cache_temp):
 #####################################################################################
 
 # Main sequence being scheduled
-def flow(pcache):
+def flow():
     logging.info("Hit flow()")
     # Get refreshed player list
     player_cache_temp = getPlayerlist(2387727)
-    player_cache = pcache
+    # player_cache = pcache
+    
+    #global player_cache
     changes = []
     for player in player_cache_temp:
-        if player not in player_cache:
-            logging.info("Taking action for player " + str(player))
+        if player['id'] not in player_cache:
+            logging.info("Taking action for player " + str(player['id']))
             changes.append(player)
 
 
@@ -221,30 +223,6 @@ def writeIP2DB(steamid,ip):
     pass
 
 
-############################################################################
-#                                 Queue Sys                                #
-############################################################################
-
-'''
-context = zmq.Context()
-
-#  Socket to talk to server
-print("Connecting to hello world server…")
-socket = context.socket(zmq.REQ)
-socket.connect("tcp://localhost:5555")
-
-#  Do 10 requests, waiting each time for a response
-for request in range(10):
-    print("Sending request %s …" % request)
-    socket.send(b"Hello")
-
-    #  Get the reply.
-    message = socket.recv()
-    print("Received reply %s [ %s ]" % (request, message))
-
-
-'''
-
 
 ############################################################################
 #                                   Main                                   #
@@ -260,7 +238,7 @@ def main():
     player_cache = []
 
     # Scheduler for checking Server Playerlist Updates
-    schedule.every(10).seconds.do(flow(player_cache))
+    schedule.every(10).seconds.do(flow)
 
     # Keeps app alive
     while 1:
